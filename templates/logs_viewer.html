@@ -1,0 +1,458 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Autorouter Logs</title>
+    <style>
+        body {
+            font-family: 'Courier New', monospace;
+            background: #1e1e1e;
+            color: #d4d4d4;
+            margin: 0;
+            padding: 20px;
+        }
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        h1 {
+            color: #569cd6;
+            margin-bottom: 20px;
+        }
+        .controls {
+            background: #252526;
+            padding: 15px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 15px;
+            align-items: center;
+        }
+        .controls label {
+            color: #9cdcfe;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+        .controls input[type="number"],
+        .controls input[type="text"] {
+            padding: 5px 10px;
+            background: #3c3c3c;
+            color: #d4d4d4;
+            border: 1px solid #555;
+            border-radius: 3px;
+        }
+        .controls button {
+            padding: 6px 15px;
+            cursor: pointer;
+            background: #0e639c;
+            color: #fff;
+            border: none;
+            border-radius: 3px;
+            font-weight: bold;
+        }
+        .controls button:hover {
+            background: #1177bb;
+        }
+        .controls button.save {
+            background: #0a8a0a;
+        }
+        .controls button.save:hover {
+            background: #0ca00c;
+        }
+        #status {
+            margin-bottom: 10px;
+            padding: 10px;
+            background: #252526;
+            border-left: 4px solid #569cd6;
+            border-radius: 3px;
+        }
+        #status.connected {
+            border-left-color: #4ec9b0;
+        }
+        #status.error {
+            border-left-color: #f48771;
+        }
+        #status.reconnecting {
+            border-left-color: #e5e510;
+        }
+        #logs {
+            background: #1e1e1e;
+            border: 1px solid #3c3c3c;
+            border-radius: 5px;
+            padding: 15px;
+            height: 600px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            font-size: 13px;
+            line-height: 1.5;
+        }
+        .log-line {
+            margin: 2px 0;
+        }
+        /* ANSI color mappings */
+        .ansi-30 { color: #000000; }
+        .ansi-31 { color: #cd3131; }
+        .ansi-32 { color: #0dbc79; }
+        .ansi-33 { color: #e5e510; }
+        .ansi-34 { color: #2472c8; }
+        .ansi-35 { color: #bc3fbc; }
+        .ansi-36 { color: #11a8cd; }
+        .ansi-37 { color: #e5e5e5; }
+        .ansi-90 { color: #666666; }
+        .ansi-91 { color: #f14c4c; }
+        .ansi-92 { color: #23d18b; }
+        .ansi-93 { color: #f5f543; }
+        .ansi-94 { color: #3b8eea; }
+        .ansi-95 { color: #d670d6; }
+        .ansi-96 { color: #29b8db; }
+        .ansi-97 { color: #e5e5e5; }
+        .ansi-bold { font-weight: bold; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Autorouter Logs</h1>
+
+        <div class="controls">
+            <label>
+                Lines:
+                <input type="number" id="lines" value="200" min="0" max="5000" style="width: 80px;">
+            </label>
+            <label>
+                Token (optional):
+                <input type="text" id="token" placeholder="LOGS_TOKEN" style="width: 200px;">
+            </label>
+            <button id="clearBtn">Clear</button>
+            <button id="saveBtn" class="save">Save Logs</button>
+        </div>
+
+        <div id="status">Status: Not connected</div>
+
+        <div id="logs"></div>
+    </div>
+
+    <script>
+        const logsDiv = document.getElementById('logs');
+        const statusDiv = document.getElementById('status');
+        const clearBtn = document.getElementById('clearBtn');
+        const saveBtn = document.getElementById('saveBtn');
+
+        let abortController = null;
+        let autoScroll = true;
+        let logLines = [];
+
+        logsDiv.addEventListener('scroll', () => {
+            const isAtBottom = logsDiv.scrollHeight - logsDiv.scrollTop <= logsDiv.clientHeight + 50;
+            autoScroll = isAtBottom;
+        });
+
+        function updateStatus(message, type = 'info') {
+            statusDiv.textContent = 'Status: ' + message;
+            statusDiv.className = type;
+        }
+
+        function ansiToHtml(text) {
+            if (!text) return '';
+
+            // Escape HTML first
+            let html = text
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;');
+
+            // Replace ANSI escape codes with HTML spans
+            // Handle ESC[0m reset codes
+            html = html.replace(/\x1b\[0m/g, '</span>');
+            html = html.replace(/\[0m/g, '</span>');
+
+            // Handle color codes
+            const colorMap = {
+                '30': 'ansi-30', '31': 'ansi-31', '32': 'ansi-32', '33': 'ansi-33',
+                '34': 'ansi-34', '35': 'ansi-35', '36': 'ansi-36', '37': 'ansi-37',
+                '90': 'ansi-90', '91': 'ansi-91', '92': 'ansi-92', '93': 'ansi-93',
+                '94': 'ansi-94', '95': 'ansi-95', '96': 'ansi-96', '97': 'ansi-97'
+            };
+
+            // Handle ESC[XXm patterns
+            for (const [code, className] of Object.entries(colorMap)) {
+                const regex = new RegExp('\x1b\\[' + code + 'm', 'g');
+                html = html.replace(regex, '<span class="' + className + '">');
+                // Also handle [XXm without ESC
+                const regex2 = new RegExp('\\[' + code + 'm', 'g');
+                html = html.replace(regex2, '<span class="' + className + '">');
+            }
+
+            // Handle bold
+            html = html.replace(/\x1b\[1m/g, '<span class="ansi-bold">');
+            html = html.replace(/\[1m/g, '<span class="ansi-bold">');
+
+            // Clean up any remaining ANSI codes
+            html = html.replace(/\x1b\[[0-9;]*m/g, '');
+            html = html.replace(/\[[0-9;]*m/g, '');
+
+            return html;
+        }
+
+        function addLogLine(text) {
+            if (!text) return;
+
+            const line = document.createElement('div');
+            line.className = 'log-line';
+
+            // Convert ANSI codes to HTML
+            line.innerHTML = ansiToHtml(text);
+
+            logsDiv.appendChild(line);
+            logLines.push(text);
+
+            if (autoScroll) {
+                logsDiv.scrollTop = logsDiv.scrollHeight;
+            }
+        }
+
+        function closeConnection() {
+            if (abortController) {
+                abortController.abort();
+                abortController = null;
+            }
+        }
+
+        function stopStreaming() {
+            shouldReconnect = false;
+            if (reconnectTimeoutId) {
+                clearTimeout(reconnectTimeoutId);
+                reconnectTimeoutId = null;
+            }
+            closeConnection();
+            reconnectAttempts = 0;
+        }
+
+        function sseLineToData(line) {
+            if (!line) return null;
+
+            // Comments (e.g. keepalive)
+            if (line.startsWith(':')) {
+                const comment = line.replace(/^:\s?/, '');
+                if (comment === 'keepalive') return null;
+                return null;
+            }
+
+            // Event name is ignored (we only care about data)
+            if (line.startsWith('event:')) return null;
+
+            if (line.startsWith('data:')) {
+                // Allow both "data: " and "data:" formats
+                return line.replace(/^data:\s?/, '');
+            }
+            return null;
+        }
+
+        let shouldReconnect = true;
+        let reconnectTimeoutId = null;
+        let reconnectAttempts = 0;
+        const maxReconnectDelay = 30000; // 30 seconds max delay
+
+        async function connectViaFetch(url, token) {
+            abortController = new AbortController();
+
+            const retryDelay = Math.min(
+                1000 * Math.pow(2, reconnectAttempts),
+                maxReconnectDelay
+            );
+
+            if (reconnectAttempts > 0) {
+                updateStatus(`Reconnecting... (attempt ${reconnectAttempts + 1})`, 'reconnecting');
+            } else {
+                updateStatus('Connecting...', 'info');
+            }
+
+            let response;
+            try {
+                const headers = {};
+                if (token) {
+                    headers['X-Logs-Token'] = token;
+                }
+
+                response = await fetch(url, {
+                    method: 'GET',
+                    headers: headers,
+                    cache: 'no-store',
+                    signal: abortController.signal,
+                });
+            } catch (e) {
+                if (e?.name === 'AbortError') {
+                    console.log('Connection aborted');
+                    return;
+                }
+                updateStatus('Connection error - will retry', 'error');
+                console.error('Fetch error:', e);
+                closeConnection();
+                scheduleReconnect();
+                return;
+            }
+
+            if (!response.ok || !response.body) {
+                updateStatus(`HTTP ${response.status} - will retry`, 'error');
+                closeConnection();
+                scheduleReconnect();
+                return;
+            }
+
+            // Connected successfully, reset reconnect counter
+            reconnectAttempts = 0;
+            updateStatus('Connected', 'connected');
+
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+
+            let buffer = '';
+            let dataLines = [];
+            let chunkCount = 0;
+
+            try {
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) {
+                        console.log('Stream done after', chunkCount, 'chunks');
+                        break;
+                    }
+
+                    chunkCount++;
+                    console.log('Chunk', chunkCount, 'size:', value.length, 'bytes');
+
+                    buffer += decoder.decode(value, { stream: true });
+                    const parts = buffer.split('\n');
+                    buffer = parts.pop() ?? '';
+
+                    for (const raw of parts) {
+                        const line = raw.replace(/\r$/, '');
+
+                        // Blank line terminates an SSE event
+                        if (line === '') {
+                            if (dataLines.length > 0) {
+                                const logText = dataLines.join('\n');
+                                console.log('Adding log line:', logText.substring(0, 100));
+                                addLogLine(logText);
+                                dataLines = [];
+                            }
+                            continue;
+                        }
+
+                        const data = sseLineToData(line);
+                        if (data !== null) {
+                            dataLines.push(data);
+                        }
+                    }
+                }
+            } catch (e) {
+                if (e?.name !== 'AbortError') {
+                    updateStatus('Connection error - will retry', 'error');
+                    console.error('Stream read error:', e);
+                }
+            } finally {
+                closeConnection();
+                if (shouldReconnect) {
+                    updateStatus('Disconnected - will retry', 'reconnecting');
+                    scheduleReconnect();
+                } else if (statusDiv.className !== 'error') {
+                    updateStatus('Disconnected', 'info');
+                }
+            }
+        }
+
+        function scheduleReconnect() {
+            if (!shouldReconnect) return;
+
+            if (reconnectTimeoutId) {
+                clearTimeout(reconnectTimeoutId);
+            }
+
+            reconnectAttempts++;
+            const delay = Math.min(
+                1000 * Math.pow(2, reconnectAttempts - 1),
+                maxReconnectDelay
+            );
+
+            console.log(`Scheduling reconnect in ${delay}ms (attempt ${reconnectAttempts})`);
+
+            reconnectTimeoutId = setTimeout(() => {
+                startStreaming();
+            }, delay);
+        }
+
+        function startStreaming() {
+            const lines = document.getElementById('lines').value;
+            const token = document.getElementById('token').value;
+            const url = `/logs/sse?lines=${lines}&follow=true`;
+            connectViaFetch(url, token.trim());
+        }
+
+        function clear() {
+            logsDiv.innerHTML = '';
+            logLines = [];
+            // Re-enable reconnect and restart streaming
+            shouldReconnect = true;
+            reconnectAttempts = 0;
+            stopStreaming();
+            startStreaming();
+        }
+
+        async function saveLogs() {
+            const lines = document.getElementById('lines').value;
+            const token = document.getElementById('token').value;
+
+            updateStatus('Saving logs...', 'info');
+
+            try {
+                const headers = {
+                    'Content-Type': 'application/json'
+                };
+                if (token) {
+                    headers['X-Logs-Token'] = token.trim();
+                }
+
+                const response = await fetch('/logs/download', {
+                    method: 'POST',
+                    headers: headers,
+                    body: JSON.stringify({ lines: parseInt(lines) })
+                });
+
+                if (!response.ok) {
+                    updateStatus(`Save failed: HTTP ${response.status}`, 'error');
+                    return;
+                }
+
+                const blob = await response.blob();
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `autorouter-logs-${new Date().toISOString().replace(/:/g, '-')}.log`;
+                document.body.appendChild(a);
+                a.click();
+                window.URL.revokeObjectURL(url);
+                document.body.removeChild(a);
+
+                updateStatus('Logs saved successfully', 'connected');
+                setTimeout(() => {
+                    if (statusDiv.className === 'connected') {
+                        updateStatus('Not connected', 'info');
+                    }
+                }, 3000);
+            } catch (e) {
+                updateStatus('Save error: ' + e.message, 'error');
+                console.error('Save error:', e);
+            }
+        }
+
+        clearBtn.addEventListener('click', clear);
+        saveBtn.addEventListener('click', saveLogs);
+
+        // Auto-start streaming on load
+        startStreaming();
+    </script>
+</body>
+</html>

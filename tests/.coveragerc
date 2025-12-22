@@ -1,0 +1,35 @@
+[run]
+# Include source files
+source = .
+
+# Omit files
+omit =
+    tests/*
+    .venv/*
+    venv/*
+    */site-packages/*
+    */__pycache__/*
+    */test_*.py
+    *_test.py
+    conftest.py
+
+[report]
+# Exclude lines from coverage
+exclude_lines =
+    pragma: no cover
+    def __repr__
+    raise AssertionError
+    raise NotImplementedError
+    if __name__ == .__main__.:
+    if TYPE_CHECKING:
+    @abstractmethod
+    @abc.abstractmethod
+
+# Show missing lines
+show_missing = True
+
+# Precision for coverage percentage
+precision = 2
+
+[html]
+directory = htmlcov
