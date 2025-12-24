@@ -62,6 +62,10 @@ class AppConfig:
     openrouter_http_referer: str
     openrouter_x_title: str
 
+    # Proxy settings
+    http_proxy: str
+    https_proxy: str
+
     # Virtual model settings
     virtual_model_id: str
     virtual_model_name: str
@@ -106,6 +110,8 @@ class AppConfig:
             openrouter_api_key=os.getenv("OPENROUTER_API_KEY", ""),
             openrouter_http_referer=os.getenv("OPENROUTER_HTTP_REFERER", "http://localhost"),
             openrouter_x_title=os.getenv("OPENROUTER_X_TITLE", "copilot-autorouter"),
+            http_proxy=_env_str("HTTP_PROXY", ""),
+            https_proxy=_env_str("HTTPS_PROXY", ""),
             virtual_model_id="copilot-autorouter",
             virtual_model_name="Copilot Autorouter",
             min_context_length=_env_int("MIN_CTX", 131072),

@@ -125,6 +125,21 @@ class UpstreamClient:
             "User-Agent": self._config.user_agent,
         }
 
+    def get_proxy_url(self) -> str | None:
+        """
+        Get proxy URL for httpx AsyncClient.
+
+        Returns HTTPS proxy if set (preferred for HTTPS API calls),
+        otherwise HTTP proxy if set, or None if no proxy configured.
+        """
+        if self._config.https_proxy:
+            log.info("HTTPS proxy configured: %s", self._config.https_proxy)
+            return self._config.https_proxy
+        if self._config.http_proxy:
+            log.info("HTTP proxy configured: %s", self._config.http_proxy)
+            return self._config.http_proxy
+        return None
+
     async def chat_completion(
         self,
         client: httpx.AsyncClient,

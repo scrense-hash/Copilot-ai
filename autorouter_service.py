@@ -410,7 +410,8 @@ async def log_filtered_models(*, timeout_s: Optional[float] = None) -> None:
 
     try:
         timeout = config.request_timeout_s if timeout_s is None else timeout_s
-        async with httpx.AsyncClient(timeout=timeout) as client:
+        proxy_url = upstream_client.get_proxy_url()
+        async with httpx.AsyncClient(timeout=timeout, proxy=proxy_url) as client:
             models = await model_cache.get_models(client, config)
         candidates = model_selector.choose_candidates(models, config)
     except Exception as e:
@@ -643,7 +644,8 @@ async def v1_models() -> Dict[str, Any]:
     selected = await get_last_selected()
     if selected is None:
         log.info("/v1/models no last_selected; choosing best candidate now")
-        async with httpx.AsyncClient(timeout=config.request_timeout_s) as client:
+        proxy_url = upstream_client.get_proxy_url()
+        async with httpx.AsyncClient(timeout=config.request_timeout_s, proxy=proxy_url) as client:
             models = await model_cache.get_models(client, config)
         candidates = model_selector.choose_candidates(models, config)
         log.info("/v1/models candidates count=%d", len(candidates))
@@ -1613,8 +1615,13 @@ async def v1_chat_completions(
 
     # Always use streaming mode - no read timeout to avoid killing long pauses
     connect_timeout = min(30.0, float(config.request_timeout_s))
+
+    # Get proxy configuration from upstream client
+    proxy_url = upstream_client.get_proxy_url()
+
     client = httpx.AsyncClient(
-        timeout=httpx.Timeout(connect=connect_timeout, write=connect_timeout, pool=connect_timeout, read=None)
+        timeout=httpx.Timeout(connect=connect_timeout, write=connect_timeout, pool=connect_timeout, read=None),
+        proxy=proxy_url
     )
 
     try:

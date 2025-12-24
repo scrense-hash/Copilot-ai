@@ -20,6 +20,20 @@
 
 ---
 
+## Настройки прокси
+
+### HTTP_PROXY
+- **Значение по умолчанию**: Пусто
+- **Описание**: HTTP прокси для запросов к API OpenRouter. Формат: `http://proxy.example.com:8080` или `http://user:pass@proxy.example.com:8080`
+
+### HTTPS_PROXY
+- **Значение по умолчанию**: Пусто
+- **Описание**: HTTPS прокси для запросов к API OpenRouter (приоритетнее HTTP_PROXY). Формат: `http://proxy.example.com:8080` или `http://user:pass@proxy.example.com:8080`
+
+**Примечание**: Если установлены оба параметра, для HTTPS запросов будет использоваться HTTPS_PROXY. Для обхода геоблокировки рекомендуется использовать HTTPS_PROXY.
+
+---
+
 ## Настройки виртуальной модели
 
 ### VIRTUAL_MODEL_ID
