@@ -13,7 +13,7 @@ from typing import Any, AsyncGenerator, AsyncIterator, Callable, Dict, List, Opt
 
 import httpx
 
-log = logging.getLogger("autorouter")
+log = logging.getLogger("copilot_ai")
 
 SSEEventLines = List[str]
 
@@ -257,7 +257,7 @@ def normalize_upstream_chunk_to_openai(
                         finish = "tool_calls"
                 else:
                     # If parsing failed, keep original content as-is.
-                    # Autorouter will detect unparseable/incomplete tool markup and failover to next model.
+                    # Copilot AI will detect unparseable/incomplete tool markup and failover to next model.
                     # We do NOT attempt to fix or strip partial tags - that would mask broken models.
                     out_delta["content"] = d["content"]
             elif d["content"] is None:

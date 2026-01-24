@@ -13,7 +13,7 @@ import httpx
 
 from config import AppConfig
 
-log = logging.getLogger("autorouter")
+log = logging.getLogger("copilot_ai")
 
 # Base62 alphabet for strict tool_call IDs (Mistral compatibility)
 _BASE62_ALPHABET = string.ascii_letters + string.digits  # A-Za-z0-9

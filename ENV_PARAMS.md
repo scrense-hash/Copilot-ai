@@ -1,4 +1,4 @@
-# Описание параметров конфигурации Autorouter
+# Описание параметров конфигурации Copilot AI
 
 ## Основные настройки OpenRouter
 
@@ -15,7 +15,7 @@
 - **Описание**: HTTP Referer для запросов OpenRouter.
 
 ### OPENROUTER_X_TITLE
-- **Значение по умолчанию**: `copilot-autorouter`
+- **Значение по умолчанию**: `copilot-ai`
 - **Описание**: Название приложения для OpenRouter.
 
 ---
@@ -37,11 +37,11 @@
 ## Настройки виртуальной модели
 
 ### VIRTUAL_MODEL_ID
-- **Значение по умолчанию**: `copilot-autorouter`
+- **Значение по умолчанию**: `copilot-ai`
 - **Описание**: ID виртуальной модели.
 
 ### VIRTUAL_MODEL_NAME
-- **Значение по умолчанию**: `Copilot Autorouter`
+- **Значение по умолчанию**: `Copilot AI`
 - **Описание**: Имя виртуальной модели.
 
 ---
@@ -125,7 +125,7 @@
 - **Описание**: Уровень логирования (DEBUG, INFO, WARNING, ERROR).
 
 ### LOG_PATH
-- **Значение по умолчанию**: `/var/log/autorouter/autorouter.log`
+- **Значение по умолчанию**: `/var/log/copilot-ai/copilot-ai.log`
 - **Описание**: Путь к файлу логов.
 
 ### DEBUG_SSE_TRAFFIC
@@ -161,7 +161,7 @@
 ## Прочие настройки
 
 ### USER_AGENT
-- **Значение по умолчанию**: `copilot-autorouter/0.8.0 (+https://openrouter.ai)`
+- **Значение по умолчанию**: `copilot-ai/0.8.0 (+https://openrouter.ai)`
 - **Описание**: User-Agent для запросов.
 
 ### MAX_REQUEST_BYTES

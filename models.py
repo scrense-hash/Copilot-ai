@@ -1,4 +1,4 @@
-"""Model management and selection for Autorouter."""
+"""Model management and selection for Copilot AI."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ import httpx
 
 from config import AppConfig
 
-log = logging.getLogger("autorouter")
+log = logging.getLogger("copilot_ai")
 
 
 @dataclass
@@ -41,7 +41,7 @@ class ModelInfo:
         return {
             "id": virtual_id,
             "object": "model",
-            "owned_by": "copilot-autorouter",
+            "owned_by": "copilot-ai",
             "name": virtual_name,
             "context_length": self.context_length,
             "supported_parameters": self.supported_parameters,

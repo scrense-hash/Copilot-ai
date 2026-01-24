@@ -1,4 +1,4 @@
-"""Logging configuration for Autorouter service."""
+"""Logging configuration for Copilot AI service."""
 
 from __future__ import annotations
 
@@ -17,14 +17,14 @@ def setup_logging(log_path: str | None = None) -> logging.Logger:
     """
     Configure logging with rotation.
 
-    Logs are written to /var/log/autorouter/autorouter.log with:
+    Logs are written to /var/log/copilot-ai/copilot-ai.log with:
       - maxBytes: 1 MB
       - backupCount: 3
 
     LOG_LEVEL=DISABLE disables logging entirely.
     """
     level_name = os.getenv("LOG_LEVEL", "INFO").upper().strip()
-    logger = logging.getLogger("autorouter")
+    logger = logging.getLogger("copilot_ai")
 
     # Clear existing handlers to avoid duplication
     logger.handlers.clear()
@@ -43,7 +43,7 @@ def setup_logging(log_path: str | None = None) -> logging.Logger:
 
     # Setup handler with fallback to console
     if not log_path:
-        log_path = "/var/log/autorouter/autorouter.log"
+        log_path = "/var/log/copilot-ai/copilot-ai.log"
 
     handler, fallback_err = _create_log_handler(log_path)
 
@@ -59,7 +59,7 @@ def setup_logging(log_path: str | None = None) -> logging.Logger:
             fallback_err,
         )
     logger.propagate = False
-    # NOTE: traffic logger handlers are attached in autorouter_service.py after config is loaded.
+    # NOTE: traffic logger handlers are attached in copilot_ai_service.py after config is loaded.
     return logger
 
 

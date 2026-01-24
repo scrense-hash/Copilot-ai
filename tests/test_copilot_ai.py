@@ -1,5 +1,5 @@
 """
-Comprehensive test suite for Autorouter service.
+Comprehensive test suite for Copilot AI service.
 
 Tests cover:
 - Configuration management
@@ -19,7 +19,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
-from autorouter_service import _normalized_has_payload, app, get_last_selected, set_last_selected
+from copilot_ai_service import _normalized_has_payload, app, get_last_selected, set_last_selected
 from config import AppConfig
 from models import ModelCache, ModelInfo, ModelSelector
 from upstream import UpstreamClient
@@ -37,8 +37,10 @@ def test_config():
         openrouter_api_key="test-key",
         openrouter_http_referer="http://localhost",
         openrouter_x_title="test-app",
-        virtual_model_id="test-autorouter",
-        virtual_model_name="Test Autorouter",
+        http_proxy="",
+        https_proxy="",
+        virtual_model_id="test-copilot-ai",
+        virtual_model_name="Test Copilot AI",
         min_context_length=131072,
         max_price=0.01,
         priority_models={"priority-model-1", "priority-model-2"},
@@ -58,7 +60,7 @@ def test_config():
         port=8000,
         log_level="INFO",
         max_request_bytes=2_000_000,
-        log_path="/tmp/test_autorouter.log",
+        log_path="/tmp/test_copilot_ai.log",
         user_agent="test-agent",
     )
 
@@ -476,10 +478,10 @@ class TestAPIEndpoints:
     async def test_v1_models_no_api_key(self, client):
         """Test models endpoint without API key."""
         # Patch the config module's config variable
-        from autorouter_service import config as app_config
+        from copilot_ai_service import config as app_config
         # Create new config with empty API key
         empty_config = replace(app_config, openrouter_api_key="")
-        with patch("autorouter_service.config", empty_config):
+        with patch("copilot_ai_service.config", empty_config):
             response = await client.get("/v1/models")
             assert response.status_code == 500
             assert "OPENROUTER_API_KEY" in response.json()["detail"]
@@ -508,10 +510,10 @@ class TestAPIEndpoints:
     async def test_chat_completions_no_api_key(self, client):
         """Test chat completions without API key."""
         # Patch the config module's config variable
-        from autorouter_service import config as app_config
+        from copilot_ai_service import config as app_config
         # Create new config with empty API key
         empty_config = replace(app_config, openrouter_api_key="")
-        with patch("autorouter_service.config", empty_config):
+        with patch("copilot_ai_service.config", empty_config):
             response = await client.post(
                 "/v1/chat/completions",
                 json={"model": "test", "messages": [{"role": "user", "content": "hi"}]},
@@ -583,7 +585,7 @@ class TestIntegration:
     @pytest.mark.asyncio
     async def test_virtual_model_normalization(self, client, sample_models, test_config):
         """Test that virtual model names are normalized to auto-routing."""
-        from autorouter_service import model_cache
+        from copilot_ai_service import model_cache
 
         # Create a simple async iterator for the mock response
         async def mock_aiter_lines():
@@ -608,7 +610,7 @@ class TestIntegration:
 
             with patch('upstream.UpstreamClient.chat_completion', AsyncMock(return_value=mock_response)):
                 body = {
-                    "model": "copilot-autorouter",  # Virtual model ID
+                    "model": "copilot-ai",  # Virtual model ID
                     "messages": [{"role": "user", "content": "test"}],
                 }
 

@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Autorouter Logs</title>
+    <title>Copilot AI Logs</title>
     <style>
         body {
             font-family: 'Courier New', monospace;
@@ -115,7 +115,7 @@
 </head>
 <body>
     <div class="container">
-        <h1>Autorouter Logs</h1>
+        <h1>Copilot AI Logs</h1>
 
         <div class="controls">
             <label>
@@ -430,7 +430,7 @@
                 const url = window.URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 a.href = url;
-                a.download = `autorouter-logs-${new Date().toISOString().replace(/:/g, '-')}.log`;
+                a.download = `copilot-ai-logs-${new Date().toISOString().replace(/:/g, '-')}.log`;
                 document.body.appendChild(a);
                 a.click();
                 window.URL.revokeObjectURL(url);

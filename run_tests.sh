@@ -1,10 +1,10 @@
 #!/bin/bash
-# Script to run Autorouter tests
+# Script to run Copilot AI tests
 
 set -e  # Exit on error
 
 echo "=================================="
-echo "Autorouter Test Suite Runner"
+echo "Copilot AI Test Suite Runner"
 echo "=================================="
 echo ""
 

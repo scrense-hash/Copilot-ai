@@ -4,9 +4,9 @@
 import time
 import logging
 
-# Setup logging to the autorouter log file
+# Setup logging to the Copilot AI log file
 logging.basicConfig(
-    filename='autorouter.log',
+    filename='copilot-ai.log',
     level=logging.INFO,
     format='%(asctime)s %(levelname)-8s %(name)s - %(message)s'
 )

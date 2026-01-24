@@ -21,7 +21,7 @@ sys.path.insert(0, str(project_root))
 # because the app loads config at import time.
 os.environ.setdefault("OPENROUTER_API_KEY", "test-key")
 os.environ.setdefault("LOG_LEVEL", "DEBUG")
-os.environ.setdefault("LOG_PATH", "/tmp/autorouter_test.log")
+os.environ.setdefault("LOG_PATH", "/tmp/copilot_ai_test.log")
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -42,8 +42,8 @@ def project_root_path():
 @pytest.fixture(autouse=True)
 def reset_last_selected():
     """Reset last selected model between tests to avoid order coupling."""
-    import autorouter_service
+    import copilot_ai_service
 
-    autorouter_service._last_selected = None
+    copilot_ai_service._last_selected = None
     yield
-    autorouter_service._last_selected = None
+    copilot_ai_service._last_selected = None

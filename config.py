@@ -1,4 +1,4 @@
-"""Configuration management for Autorouter service."""
+"""Configuration management for Copilot AI service."""
 
 from __future__ import annotations
 
@@ -91,7 +91,7 @@ class AppConfig:
     debug_sse_traffic_truncate_bytes: int
     debug_sse_traffic_max_bytes: int
     debug_sse_traffic_backup_count: int
-    # Mirror traffic log to main autorouter logger (helps when file handler doesn't write)
+    # Mirror traffic log to main copilot-ai logger (helps when file handler doesn't write)
     debug_sse_traffic_mirror_main: bool
     debug_sse_traffic_mirror_main_max_chunks: int
 
@@ -109,11 +109,11 @@ class AppConfig:
             openrouter_base_url="https://openrouter.ai/api/v1",
             openrouter_api_key=os.getenv("OPENROUTER_API_KEY", ""),
             openrouter_http_referer=os.getenv("OPENROUTER_HTTP_REFERER", "http://localhost"),
-            openrouter_x_title=os.getenv("OPENROUTER_X_TITLE", "copilot-autorouter"),
+            openrouter_x_title=os.getenv("OPENROUTER_X_TITLE", "copilot-ai"),
             http_proxy=_env_str("HTTP_PROXY", ""),
             https_proxy=_env_str("HTTPS_PROXY", ""),
-            virtual_model_id="copilot-autorouter",
-            virtual_model_name="Copilot Autorouter",
+            virtual_model_id="copilot-ai",
+            virtual_model_name="Copilot AI",
             min_context_length=_env_int("MIN_CTX", 131072),
             max_price=_env_float("MAX_PRICE", 0.0),
             priority_models=_csv_set("PRIORITY_MODELS"),
@@ -133,8 +133,8 @@ class AppConfig:
             port=int(os.getenv("PORT", "8000")),
             log_level=os.getenv("LOG_LEVEL", "INFO").upper().strip(),
             max_request_bytes=_env_int("MAX_REQUEST_BYTES", 2_000_000),  # ~2MB
-            log_path=_env_str("LOG_PATH", "/var/log/autorouter/autorouter.log"),
-            user_agent=_env_str("USER_AGENT", "copilot-autorouter/0.8.0 (+https://openrouter.ai)"),
+            log_path=_env_str("LOG_PATH", "/var/log/copilot-ai/copilot-ai.log"),
+            user_agent=_env_str("USER_AGENT", "copilot-ai/0.8.0 (+https://openrouter.ai)"),
         )
 
     def validate(self, require_api_key: bool = True) -> None:

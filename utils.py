@@ -1,11 +1,11 @@
-"""Utility functions for Autorouter."""
+"""Utility functions for Copilot AI."""
 
 from __future__ import annotations
 
 import logging
 from pathlib import Path
 
-log = logging.getLogger("autorouter")
+log = logging.getLogger("copilot_ai")
 
 
 def load_env_files() -> None:
@@ -41,7 +41,7 @@ def dump_config(config) -> None:
     """Log effective configuration at startup."""
     from logger import mask_secret
 
-    log.info("=== Autorouter startup config ===")
+    log.info("=== Copilot AI startup config ===")
     log.info("OPENROUTER_BASE_URL=%s", config.openrouter_base_url)
     log.info("VIRTUAL_MODEL_ID=%s", config.virtual_model_id)
     log.info("VIRTUAL_MODEL_NAME=%s", config.virtual_model_name)

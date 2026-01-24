@@ -1,6 +1,6 @@
-# Autorouter Test Suite
+# Copilot AI Test Suite
 
-Комплексный набор тестов для Autorouter service - OpenAI-совместимого роутера к OpenRouter.
+Комплексный набор тестов для Copilot AI service - OpenAI-совместимого роутера к OpenRouter.
 
 ## 📂 Структура
 
@@ -8,7 +8,7 @@
 tests/
 ├── __init__.py                 # Package marker
 ├── conftest.py                 # Shared fixtures and pytest config
-├── test_autorouter.py          # Main tests (config, models, upstream, API)
+├── test_copilot_ai.py          # Main tests (config, models, upstream, API)
 ├── test_sse_handler.py         # SSE handling tests
 ├── pytest.ini                  # Pytest configuration
 ├── requirements-dev.txt        # Development dependencies
@@ -45,7 +45,7 @@ pip install -r tests/requirements-dev.txt
 ./run_tests.sh -p
 
 # Конкретный файл
-./run_tests.sh -t test_autorouter.py
+./run_tests.sh -t test_copilot_ai.py
 
 # Комбинирование опций
 ./run_tests.sh -c -v -p
@@ -64,18 +64,18 @@ pytest tests/ -v
 pytest tests/ --cov=. --cov-config=tests/.coveragerc --cov-report=html
 
 # Конкретный файл
-pytest tests/test_autorouter.py
+pytest tests/test_copilot_ai.py
 
 # Конкретный класс
-pytest tests/test_autorouter.py::TestConfig
+pytest tests/test_copilot_ai.py::TestConfig
 
 # Конкретный тест
-pytest tests/test_autorouter.py::TestConfig::test_from_env_defaults
+pytest tests/test_copilot_ai.py::TestConfig::test_from_env_defaults
 ```
 
 ## 📋 Что покрывают тесты
 
-### test_autorouter.py (42 теста)
+### test_copilot_ai.py (42 теста)
 
 #### TestConfig - Конфигурация
 - ✅ Загрузка из environment variables
@@ -175,7 +175,7 @@ def project_root_path():
     pass
 ```
 
-### test_autorouter.py
+### test_copilot_ai.py
 
 ```python
 @pytest.fixture

@@ -1,5 +1,5 @@
 """
-Autorouter service (OpenAI-compatible) -> OpenRouter as upstream.
+Copilot AI service (OpenAI-compatible) -> OpenRouter as upstream.
 
 This refactored version provides:
 - Better code organization with separate modules
@@ -8,8 +8,8 @@ This refactored version provides:
 - Type hints throughout
 
 Virtual model:
-  id="copilot-autorouter"
-  name="Copilot Autorouter"
+  id="copilot-ai"
+  name="Copilot AI"
 
 Hard filters:
   tools support + context_length >= 131072
@@ -180,7 +180,7 @@ def _split_content_and_tool_calls(chunk: dict) -> List[dict]:
         return [chunk]
 
 
-traffic_log = logging.getLogger("autorouter.traffic")
+traffic_log = logging.getLogger("copilot_ai.traffic")
 _traffic_mirror_budget: dict[str, int] = {}  # req_id -> remaining mirrored chunks to main log
 _traffic_mirror_budget_max_size = 10000  # Limit the size of the budget dict to prevent memory leaks
 
@@ -443,7 +443,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         if config.openrouter_api_key:
             startup_task = asyncio.create_task(
                 log_filtered_models(timeout_s=min(5.0, config.request_timeout_s)),
-                name="autorouter.log_filtered_models",
+                name="copilot_ai.log_filtered_models",
             )
 
     yield  # Application is running
@@ -457,7 +457,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 # FastAPI app with lifespan
 app = FastAPI(
-    title="autorouter-service",
+    title="copilot-ai-service",
     version="0.8.0",
     lifespan=lifespan
 )
@@ -628,7 +628,7 @@ async def logs_download(
         content=content,
         media_type="text/plain",
         headers={
-            "Content-Disposition": "attachment; filename=autorouter-logs.log",
+            "Content-Disposition": "attachment; filename=copilot-ai-logs.log",
         },
     )
 
@@ -657,7 +657,7 @@ async def v1_models() -> Dict[str, Any]:
                     {
                         "id": config.virtual_model_id,
                         "object": "model",
-                        "owned_by": "copilot-autorouter",
+                        "owned_by": "copilot-ai",
                         "name": config.virtual_model_name,
                         "unavailable_reason": "No candidates match tools + >=MIN_CTX (and price/bans).",
                     }
@@ -996,7 +996,7 @@ def _traffic_dump_bytes(tag: str, req_id: str, model_id: str, b: bytes) -> None:
     try:
         # Mirror some traffic into main log (so you see it even if traffic file doesn't append)
         if getattr(config, "debug_sse_traffic_mirror_main", True):
-            # budget per request to avoid blowing up autorouter.log instantly
+            # budget per request to avoid blowing up copilot-ai.log instantly
             if req_id not in _traffic_mirror_budget:
                 # Prevent memory leak: if dict is too large, clear old entries
                 if len(_traffic_mirror_budget) >= _traffic_mirror_budget_max_size:
@@ -1108,8 +1108,8 @@ async def handle_auto_route_request_buffered_stream(
     headers = {
         "Cache-Control": "no-cache",
         "X-Accel-Buffering": "no",
-        "X-Autorouter-Virtual-Model": config.virtual_model_id,
-        "X-Autorouter-Mode": "buffered-until-done",
+        "X-Copilot-AI-Virtual-Model": config.virtual_model_id,
+        "X-Copilot-AI-Mode": "buffered-until-done",
     }
 
     async def gen() -> AsyncGenerator[bytes, None]:
