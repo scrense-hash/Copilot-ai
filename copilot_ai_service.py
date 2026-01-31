@@ -25,6 +25,7 @@ import logging
 import os
 import time
 import uuid
+from dataclasses import dataclass
 from logging.handlers import RotatingFileHandler
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -301,7 +302,15 @@ upstream_client = UpstreamClient(config)
 
 # Track last selected model
 _last_selected_lock = asyncio.Lock()
-_last_selected: Optional[ModelInfo] = None
+
+
+@dataclass
+class _LastSelectedState:
+    selected: Optional[ModelInfo] = None
+    selected_at: Optional[float] = None
+
+
+_last_selected_state = _LastSelectedState()
 
 
 def _read_last_lines(path: Path, n: int, max_bytes: int = 256_000) -> list[str]:
@@ -495,9 +504,9 @@ async def debug_traffic() -> Dict[str, Any]:
 
 async def set_last_selected(m: ModelInfo) -> None:
     """Set the last selected model."""
-    global _last_selected
     async with _last_selected_lock:
-        _last_selected = m
+        _last_selected_state.selected = m
+        _last_selected_state.selected_at = time.monotonic()
     log.info(
         "Selected model upstream_id=%s upstream_name=%s ctx=%s price=%s/%s",
         m.id,
@@ -510,8 +519,21 @@ async def set_last_selected(m: ModelInfo) -> None:
 
 async def get_last_selected() -> Optional[ModelInfo]:
     """Get the last selected model."""
+    ttl_s = int(getattr(config, "last_selected_ttl_s", 0))
     async with _last_selected_lock:
-        return _last_selected
+        if _last_selected_state.selected is None:
+            return None
+        if ttl_s <= 0:
+            return None
+        if _last_selected_state.selected_at is None:
+            return None
+        age = time.monotonic() - _last_selected_state.selected_at
+        if age <= ttl_s:
+            return _last_selected_state.selected
+        # Expired: clear cache
+        _last_selected_state.selected = None
+        _last_selected_state.selected_at = None
+        return None
 
 
 @app.get("/healthz")
@@ -1089,18 +1111,16 @@ async def handle_auto_route_request_buffered_stream(
     req_id: str,
 ) -> Response:
     """Buffered streaming: upstream stream=True, client gets only keepalives until [DONE]."""
-    models = await model_cache.get_models(client, config)
-    candidates = model_selector.choose_candidates(models, config)
-    log.info(
-        "Auto-route candidates=%d (after filters tools+>=MIN_CTX+price/ban) [buffered_stream_until_done]",
-        len(candidates),
-    )
-
-    if not candidates:
-        raise HTTPException(
-            status_code=503,
-            detail="No upstream models available after filters (tools+min_ctx+price+ban).",
+    cached = await get_last_selected()
+    if cached is not None:
+        use_cached_only = True
+        log.info(
+            "Auto-route using cached model upstream_id=%s ttl_s=%s",
+            cached.id,
+            getattr(config, "last_selected_ttl_s", None),
         )
+    else:
+        use_cached_only = False
 
     # Force upstream streaming, but do not forward content until we have a full [DONE]-terminated stream.
     base_body = dict(body)
@@ -1113,7 +1133,8 @@ async def handle_auto_route_request_buffered_stream(
     }
 
     async def gen() -> AsyncGenerator[bytes, None]:
-        total = len(candidates)
+        nonlocal use_cached_only
+        total = 1 if use_cached_only else 0
         # IMPORTANT: send a minimal "data:" chunk immediately (role=assistant).
         # Copilot can error on "comments-only" streams.
         first_obj = _first_choice_chunk(req_id=req_id, model_id=config.virtual_model_id)
@@ -1150,14 +1171,23 @@ async def handle_auto_route_request_buffered_stream(
             while True:
                 round_no += 1
 
-                # Refresh candidates each round so models can recover quickly from 429 bursts.
-                models = await model_cache.get_models(client, config)
-                current_candidates = model_selector.choose_candidates(models, config)
-                total = len(current_candidates)
-                log.info(
-                    "Auto-route candidates=%d (after filters tools+>=MIN_CTX+price/ban) [buffered_stream_until_done]",
-                    total,
-                )
+                if use_cached_only:
+                    assert cached is not None
+                    current_candidates = [cached]
+                    total = 1
+                    log.info(
+                        "Auto-route candidates=%d (cached) [buffered_stream_until_done]",
+                        total,
+                    )
+                else:
+                    # Refresh candidates each round so models can recover quickly from 429 bursts.
+                    models = await model_cache.get_models(client, config)
+                    current_candidates = model_selector.choose_candidates(models, config)
+                    total = len(current_candidates)
+                    log.info(
+                        "Auto-route candidates=%d (after filters tools+>=MIN_CTX+price/ban) [buffered_stream_until_done]",
+                        total,
+                    )
 
                 if not current_candidates:
                     # No candidates right now; keep the connection alive and retry.
@@ -1168,7 +1198,7 @@ async def handle_auto_route_request_buffered_stream(
                     continue
 
                 rotated = current_candidates[start_idx:] + current_candidates[:start_idx]
-                start_idx = (start_idx + 1) % total
+                start_idx = (start_idx + 1) % total if total else 0
 
                 for i, mdl in enumerate(rotated, start=1):
                     attempt_global += 1
@@ -1513,6 +1543,16 @@ async def handle_auto_route_request_buffered_stream(
                                 await resp.aclose()
 
                 # All candidates in this round failed; retry forever (roulette).
+                if use_cached_only:
+                    # Cached model failed; fall back to full candidate list.
+                    assert cached is not None
+                    log.info(
+                        "Cached model failed; falling back to full candidate list req_id=%s model=%s",
+                        req_id,
+                        cached.id,
+                    )
+                    use_cached_only = False
+                    continue
                 await asyncio.sleep(0.05)
                 continue
         except Exception:

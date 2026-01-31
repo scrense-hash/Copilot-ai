@@ -80,6 +80,7 @@ class AppConfig:
     request_timeout_s: float
     stream_idle_timeout_s: float
     refresh_models_s: int
+    last_selected_ttl_s: int
 
     # Buffered-stream settings (client stream=True, upstream stream=True, but we only forward after [DONE])
     buffer_stream_keepalive_s: float
@@ -121,6 +122,7 @@ class AppConfig:
             request_timeout_s=_env_float("REQUEST_TIMEOUT_S", 60.0),
             stream_idle_timeout_s=_env_float("STREAM_IDLE_TIMEOUT_S", 20.0),
             refresh_models_s=_env_int("REFRESH_MODELS_S", 300),
+            last_selected_ttl_s=_env_int("TTL_CACHE", 60),
             buffer_stream_keepalive_s=_env_float("BUFFER_STREAM_KEEPALIVE_S", 5.0),
             max_buffered_sse_bytes=_env_int("MAX_BUFFERED_SSE_BYTES", 20_000_000),
             debug_sse_traffic=_env_bool("DEBUG_SSE_TRAFFIC", False),
@@ -155,6 +157,8 @@ class AppConfig:
             raise ValueError("MAX_BUFFERED_SSE_BYTES must be > 0")
         if self.refresh_models_s <= 0:
             raise ValueError("REFRESH_MODELS_S must be > 0")
+        if self.last_selected_ttl_s < 0:
+            raise ValueError("TTL_CACHE must be >= 0")
         if self.debug_sse_traffic_truncate_bytes < 0:
             raise ValueError("DEBUG_SSE_TRAFFIC_TRUNCATE_BYTES must be >= 0")
         if self.debug_sse_traffic_max_bytes <= 0:
