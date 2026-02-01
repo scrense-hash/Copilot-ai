@@ -19,10 +19,11 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import functools
+import hashlib
 import json
 import logging
 import os
+import re
 import time
 import uuid
 from dataclasses import dataclass
@@ -233,64 +234,582 @@ if getattr(config, "debug_sse_traffic", False):
         log.exception("Failed to enable traffic logger")
 
 
-# Optional router-level system prompt injection.
-# This is useful when VS Code / Copilot connects to this service as an OpenAI-compatible model provider.
-# Load from router_prompt.txt file in project root, preserving newlines for OpenAI API compatibility.
-@functools.lru_cache(maxsize=1)
-def load_router_system_prompt() -> str:
-    """Load router system prompt from router_prompt.txt file (cached)."""
-    prompt_file = Path(__file__).parent / "router_prompt.txt"
-    if not prompt_file.exists():
-        log.info("router_prompt.txt not found at %s", prompt_file)
-        return ""
-
-    try:
-        # Read file preserving newlines exactly as they are
-        # This is critical for OpenAI API compatibility
-        with prompt_file.open("r", encoding="utf-8") as f:
-            content = f.read()
-
-        # Strip only leading/trailing whitespace, preserve internal newlines
-        content = content.strip()
-
-        if content:
-            log.info(
-                "ROUTER_SYSTEM_PROMPT loaded from %s len=%d preview=%r",
-                prompt_file,
-                len(content),
-                content[:80],
-            )
-        else:
-            log.info("router_prompt.txt is empty")
-
-        return content
-    except Exception as e:
-        log.exception("Failed to load router_prompt.txt: %s", e)
-        return ""
-
-
 def inject_system_prompt(body: Dict[str, Any]) -> None:
-    """Prepend router system prompt as a system message if enabled.
+    """Prepend active system prompt as a system message if enabled.
 
-    - Does nothing if router_prompt.txt is empty or missing.
     - Does nothing if body has no valid 'messages' list.
     - Avoids inserting duplicates (exact same content already present in a system message).
     """
-    router_prompt = load_router_system_prompt()
-    if not router_prompt:
-        return
-
     msgs = body.get("messages")
     if not isinstance(msgs, list):
         return
 
-    # Deduplicate: if an identical system message already exists, do nothing.
-    for m in msgs:
-        if isinstance(m, dict) and m.get("role") == "system" and m.get("content") == router_prompt:
-            return
+    def _has_system_prompt(content: str) -> bool:
+        for m in msgs:
+            if isinstance(m, dict) and m.get("role") == "system" and m.get("content") == content:
+                return True
+        return False
 
-    log.info("ROUTER_SYSTEM_PROMPT injected")
-    msgs.insert(0, {"role": "system", "content": router_prompt})
+    if _active_prompt is None:
+        return
+
+    active_title, active_content = _active_prompt
+    if not active_content:
+        return
+
+    if _has_system_prompt(active_content):
+        return
+
+    msgs.insert(0, {"role": "system", "content": active_content})
+    log.info("ACTIVE_SYSTEM_PROMPT injected title=%r", active_title)
+
+
+PROMPT_DB_PATH = Path(__file__).parent / "prompt.db"
+_PROMPT_HEADER_RE = re.compile(r"^(?:#+\s*)?-{4,}\s*(.*?)\s*-{4,}(?:\s*#+)?$")
+_USER_REQUEST_RE = re.compile(r"<userRequest>(.*?)</userRequest>", re.I | re.S)
+_USER_REQUEST_TAG_RE = re.compile(r"</?userRequest>", re.I)
+_ATTACHMENTS_RE = re.compile(r"<attachments>.*?</attachments>", re.I | re.S)
+_CTX_RE = re.compile(r"<context>.*?</context>", re.I | re.S)
+_EDITOR_CTX_RE = re.compile(r"<editorContext>.*?</editorContext>", re.I | re.S)
+_REMINDER_RE = re.compile(r"<reminderInstructions>.*?</reminderInstructions>", re.I | re.S)
+
+
+@dataclass
+class _PromptCommandState:
+    mode: str
+    title: str | None = None
+
+
+_prompt_command_states: dict[str, _PromptCommandState] = {}
+_prompt_command_lock = asyncio.Lock()
+_prompt_db_lock = asyncio.Lock()
+_active_prompt: tuple[str, str] | None = None  # (title, content)
+_LOCAL_COMMAND_PREFIXES = (":",)
+
+
+def _parse_prompt_header(line: str) -> str | None:
+    m = _PROMPT_HEADER_RE.match(line.strip())
+    if not m:
+        return None
+    title = (m.group(1) or "").strip()
+    if not title:
+        return None
+    return title
+
+
+def _parse_prompt_db_text(text: str) -> list[tuple[str, list[str]]]:
+    entries: list[tuple[str, list[str]]] = []
+    current_title: str | None = None
+    current_lines: list[str] = []
+    for raw_line in text.splitlines():
+        line = raw_line.rstrip("\r")
+        header = _parse_prompt_header(line)
+        if header is not None:
+            if current_title is not None:
+                entries.append((current_title, current_lines))
+            current_title = header
+            current_lines = []
+            continue
+
+        if current_title is None:
+            if not line.strip():
+                continue
+            # Ignore stray lines before first header.
+            continue
+
+        if line.startswith("- "):
+            current_lines.append(line[2:])
+        elif line.startswith("-\t"):
+            current_lines.append(line[2:])
+        else:
+            current_lines.append(line)
+
+    if current_title is not None:
+        entries.append((current_title, current_lines))
+
+    return entries
+
+
+def _serialize_prompt_db(entries: list[tuple[str, list[str]]]) -> str:
+    lines: list[str] = []
+    for title, content_lines in entries:
+        lines.append(f"### ---- {title} ---- ###")
+        for line in content_lines:
+            line = "" if line is None else line
+            lines.append(f"- {line}")
+    if not lines:
+        return ""
+    return "\n".join(lines) + "\n"
+
+
+def _normalize_prompt_content(text: str) -> list[str]:
+    lines = text.splitlines()
+    if not lines:
+        return []
+    normalized: list[str] = []
+    for line in lines:
+        if line.startswith("- "):
+            normalized.append(line[2:])
+        elif line.startswith("-\t"):
+            normalized.append(line[2:])
+        else:
+            normalized.append(line)
+    return normalized
+
+
+def _extract_user_request(text: str) -> str:
+    if not text:
+        return text
+    matches = _USER_REQUEST_RE.findall(text)
+    if matches:
+        for match in reversed(matches):
+            candidate = (match or "").strip()
+            if not candidate:
+                continue
+            if candidate == "(.*?)":
+                continue
+            return candidate
+        text = _USER_REQUEST_RE.sub("", text)
+    cleaned = _ATTACHMENTS_RE.sub("", text)
+    cleaned = _CTX_RE.sub("", cleaned)
+    cleaned = _EDITOR_CTX_RE.sub("", cleaned)
+    cleaned = _REMINDER_RE.sub("", cleaned)
+    cleaned = _USER_REQUEST_TAG_RE.sub("", cleaned)
+    return cleaned.strip()
+
+
+async def _load_prompt_db_entries() -> list[tuple[str, list[str]]]:
+    async with _prompt_db_lock:
+        if not PROMPT_DB_PATH.exists():
+            return []
+        try:
+            text = PROMPT_DB_PATH.read_text(encoding="utf-8")
+        except Exception:
+            log.exception("Failed to read prompt.db at %s", PROMPT_DB_PATH)
+            return []
+    return _parse_prompt_db_text(text)
+
+
+async def _write_prompt_db_entries(entries: list[tuple[str, list[str]]]) -> bool:
+    data = _serialize_prompt_db(entries)
+    async with _prompt_db_lock:
+        try:
+            PROMPT_DB_PATH.write_text(data, encoding="utf-8")
+            return True
+        except Exception:
+            log.exception("Failed to write prompt.db at %s", PROMPT_DB_PATH)
+            return False
+
+
+def _get_last_user_content(messages: List[Dict[str, Any]]) -> Optional[tuple[str, str]]:
+    for m in reversed(messages):
+        if not isinstance(m, dict):
+            continue
+        if m.get("role") != "user":
+            continue
+        c = m.get("content")
+        if isinstance(c, str):
+            cleaned = _extract_user_request(c)
+            if cleaned != c:
+                log.debug("LOCAL_COMMAND user_content cleaned len=%d raw_preview=%r", len(cleaned), cleaned[:200])
+            return c, cleaned
+        if isinstance(c, list):
+            parts: list[str] = []
+            for item in c:
+                if not isinstance(item, dict):
+                    continue
+                if item.get("type") == "text" and isinstance(item.get("text"), str):
+                    parts.append(item["text"])
+            if parts:
+                joined = "\n".join(parts)
+                cleaned = _extract_user_request(joined)
+                if cleaned != joined:
+                    log.debug(
+                        "LOCAL_COMMAND user_content cleaned len=%d raw_preview=%r",
+                        len(cleaned),
+                        cleaned[:200],
+                    )
+                return joined, cleaned
+    return None
+
+
+def _get_prompt_session_key(request: Request, authorization: Optional[str]) -> str:
+    for header in ("x-session-id", "x-client-id", "x-user-id"):
+        val = (request.headers.get(header) or "").strip()
+        if val:
+            return f"{header}:{val}"
+
+    xff = (request.headers.get("x-forwarded-for") or "").split(",")[0].strip()
+    if xff:
+        return f"xff:{xff}"
+
+    if authorization:
+        h = hashlib.sha256(authorization.strip().encode("utf-8")).hexdigest()[:16]
+        return f"auth:{h}"
+
+    if request.client:
+        return f"ip:{request.client.host}"
+
+    return "unknown"
+
+
+def _format_prompt_titles(titles: list[str]) -> str:
+    lines = ["Оглавления системных промптов:"]
+    for i, t in enumerate(titles, start=1):
+        lines.append(f"{i}. {t}")
+    return "\n".join(lines)
+
+
+def _get_help_text() -> str:
+    return (
+        "Доступные команды:\n"
+        ":help - показывает это сообщение\n"
+        ":prompt_list - выводит список всех оглавлений промпта\n"
+        ":prompt_select - активирует системный промпт\n"
+        ":prompt_add - добавляет в базу системный промпт\n"
+        ":prompt_edit - обновляет содержимое системного промпта с выбранным заголовком\n"
+        ":prompt_delete - удаляет из базы системный промпт\n"
+    )
+
+
+async def _local_sse_text_response(text: str, req_id: str) -> Response:
+    async def gen() -> AsyncGenerator[bytes, None]:
+        yield _sse_data(_first_choice_chunk(req_id=req_id, model_id=config.virtual_model_id))
+        yield _sse_data(
+            _create_chunk_dict(
+                req_id=req_id,
+                model_id=config.virtual_model_id,
+                delta={"content": text},
+                finish_reason=None,
+            )
+        )
+        yield _sse_data(
+            _create_chunk_dict(
+                req_id=req_id,
+                model_id=config.virtual_model_id,
+                delta={},
+                finish_reason="stop",
+            )
+        )
+        yield _sse_done()
+
+    return StreamingResponse(
+        gen(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+async def _handle_prompt_commands(
+    request: Request,
+    authorization: Optional[str],
+    messages: List[Dict[str, Any]],
+    req_id: str,
+) -> Optional[Response]:
+    global _active_prompt
+    content_pair = _get_last_user_content(messages)
+    if content_pair is None:
+        return None
+
+    raw_content, cleaned_content = content_pair
+    text = cleaned_content.strip()
+    command = None
+
+    # Normalize and search for a command line (ignore attachments block if present).
+    def _strip_known_blocks(src: str) -> str:
+        if not src:
+            return src
+        src = _ATTACHMENTS_RE.sub("", src)
+        src = _CTX_RE.sub("", src)
+        src = _EDITOR_CTX_RE.sub("", src)
+        src = _REMINDER_RE.sub("", src)
+        src = _USER_REQUEST_TAG_RE.sub("", src)
+        return src
+
+    def _find_command_line(src: str) -> tuple[str | None, bool]:
+        if not src:
+            return None, False
+        command_src = src.lstrip()
+        command_src = command_src.lstrip("\ufeff\u200b\u200c\u200d")
+        in_attachments = False
+        first_nonempty: str | None = None
+        found_line: str | None = None
+        saw_prefix = False
+        for ln in command_src.splitlines():
+            stripped = ln.lstrip()
+            if stripped == "<attachments>":
+                in_attachments = True
+                continue
+            if stripped == "</attachments>":
+                in_attachments = False
+                continue
+            if in_attachments:
+                continue
+            if not stripped:
+                continue
+            if first_nonempty is None:
+                first_nonempty = stripped
+            candidate = stripped.lstrip(">").lstrip()
+            if candidate and candidate[0] in _LOCAL_COMMAND_PREFIXES:
+                saw_prefix = True
+                found_line = candidate
+                break
+        if found_line is None and first_nonempty is not None:
+            candidate = first_nonempty.lstrip(">").lstrip()
+            if candidate and candidate[0] in _LOCAL_COMMAND_PREFIXES:
+                saw_prefix = True
+                found_line = candidate
+        return found_line, saw_prefix
+
+    command_line: str | None = None
+    saw_prefixed_line = False
+    command_candidates = [cleaned_content]
+    if raw_content != cleaned_content:
+        command_candidates.append(_strip_known_blocks(raw_content))
+
+    for candidate_src in command_candidates:
+        command_line, saw_prefixed_line = _find_command_line(candidate_src)
+        if command_line or saw_prefixed_line:
+            break
+
+    if command_line:
+        head = command_line.split()[0]
+        command = (head[1:] or "").strip().lower()
+
+    session_key = _get_prompt_session_key(request, authorization)
+    if command is not None:
+        log.info("LOCAL_COMMAND received cmd=%r session=%s line=%r", command, session_key, command_line)
+    elif saw_prefixed_line:
+        log.info("LOCAL_COMMAND not matched session=%s raw=%r", session_key, raw_content[:200])
+
+    async with _prompt_command_lock:
+        pending = _prompt_command_states.get(session_key)
+
+        known_commands = {
+            "help",
+            "prompt_list",
+            "prompt_select",
+            "prompt_add",
+            "prompt_edit",
+            "prompt_delete",
+        }
+
+        if command is not None and command not in known_commands and pending is None:
+            return await _local_sse_text_response(_get_help_text(), req_id)
+
+        if command in known_commands:
+            _prompt_command_states.pop(session_key, None)
+
+            if command == "help":
+                return await _local_sse_text_response(_get_help_text(), req_id)
+
+            if command == "prompt_list":
+                entries = await _load_prompt_db_entries()
+                titles = [t for t, _ in entries]
+                if not titles:
+                    return await _local_sse_text_response("База prompt.db пуста.", req_id)
+                return await _local_sse_text_response(_format_prompt_titles(titles), req_id)
+
+            if command == "prompt_select":
+                entries = await _load_prompt_db_entries()
+                titles = [t for t, _ in entries]
+                if not titles:
+                    return await _local_sse_text_response("База prompt.db пуста.", req_id)
+                _prompt_command_states[session_key] = _PromptCommandState(mode="select_title")
+                prompt = _format_prompt_titles(titles) + "\n\nВыберите номер оглавления и отправьте его сообщением."
+                return await _local_sse_text_response(prompt, req_id)
+
+            if command == "prompt_add":
+                _prompt_command_states[session_key] = _PromptCommandState(mode="add_title")
+                return await _local_sse_text_response(
+                    "Введите оглавление для нового системного промпта.", req_id
+                )
+
+            if command == "prompt_edit":
+                entries = await _load_prompt_db_entries()
+                titles = [t for t, _ in entries]
+                if not titles:
+                    return await _local_sse_text_response("База prompt.db пуста.", req_id)
+                _prompt_command_states[session_key] = _PromptCommandState(mode="edit_title")
+                prompt = _format_prompt_titles(titles) + "\n\nВведите номер оглавления для редактирования."
+                return await _local_sse_text_response(prompt, req_id)
+
+            if command == "prompt_delete":
+                entries = await _load_prompt_db_entries()
+                titles = [t for t, _ in entries]
+                if not titles:
+                    return await _local_sse_text_response("База prompt.db пуста.", req_id)
+                _prompt_command_states[session_key] = _PromptCommandState(mode="delete_title")
+                prompt = _format_prompt_titles(titles) + "\n\nВведите номер оглавления для удаления."
+                return await _local_sse_text_response(prompt, req_id)
+
+        if pending is None:
+            return None
+
+        if pending.mode == "select_title":
+            title = text.strip()
+            if not title:
+                return await _local_sse_text_response("Оглавление не может быть пустым. Повторите ввод.", req_id)
+            entries = await _load_prompt_db_entries()
+            if title.isdigit():
+                idx = int(title)
+                if 1 <= idx <= len(entries):
+                    t, lines = entries[idx - 1]
+                    content = "\n".join(lines)
+                    _active_prompt = (t, content)
+                    _prompt_command_states.pop(session_key, None)
+                    log.info(
+                        "ACTIVE_SYSTEM_PROMPT selected title=%r len=%d",
+                        t,
+                        len(content),
+                    )
+                    return await _local_sse_text_response(
+                        f"Активирован системный промпт: {t}", req_id
+                    )
+                return await _local_sse_text_response(
+                    f"Номер вне диапазона. Используйте 1..{len(entries)} или :prompt_list.", req_id
+                )
+            for t, lines in entries:
+                if t == title:
+                    content = "\n".join(lines)
+                    _active_prompt = (t, content)
+                    _prompt_command_states.pop(session_key, None)
+                    log.info(
+                        "ACTIVE_SYSTEM_PROMPT selected title=%r len=%d",
+                        t,
+                        len(content),
+                    )
+                    return await _local_sse_text_response(
+                        f"Активирован системный промпт: {t}", req_id
+                    )
+            return await _local_sse_text_response(
+                "Оглавление не найдено. Повторите ввод или используйте :prompt_list.", req_id
+            )
+
+        if pending.mode == "delete_title":
+            title = text.strip()
+            if not title:
+                return await _local_sse_text_response("Оглавление не может быть пустым. Повторите ввод.", req_id)
+            entries = await _load_prompt_db_entries()
+            if title.isdigit():
+                idx = int(title)
+                if 1 <= idx <= len(entries):
+                    title = entries[idx - 1][0]
+                else:
+                    return await _local_sse_text_response(
+                        f"Номер вне диапазона. Используйте 1..{len(entries)} или :prompt_list.", req_id
+                    )
+            new_entries = [(t, lines) for t, lines in entries if t != title]
+            if len(new_entries) == len(entries):
+                return await _local_sse_text_response(
+                    "Оглавление не найдено. Повторите ввод или используйте :prompt_list.", req_id
+                )
+            ok = await _write_prompt_db_entries(new_entries)
+            if not ok:
+                return await _local_sse_text_response("Не удалось записать prompt.db.", req_id)
+
+            if _active_prompt is not None and _active_prompt[0] == title:
+                _active_prompt = None
+                _prompt_command_states.pop(session_key, None)
+                return await _local_sse_text_response(
+                    f"Промпт удалён и деактивирован: {title}", req_id
+                )
+            _prompt_command_states.pop(session_key, None)
+            return await _local_sse_text_response(f"Промпт удалён: {title}", req_id)
+
+        if pending.mode == "add_title":
+            title = text.strip()
+            if not title:
+                return await _local_sse_text_response("Оглавление не может быть пустым. Повторите ввод.", req_id)
+            entries = await _load_prompt_db_entries()
+            if any(t == title for t, _ in entries):
+                return await _local_sse_text_response(
+                    "Оглавление уже существует. Используйте другое имя или :prompt_delete.", req_id
+                )
+            _prompt_command_states[session_key] = _PromptCommandState(mode="add_content", title=title)
+            return await _local_sse_text_response(
+                "Введите содержимое системного промпта (можно в несколько строк).", req_id
+            )
+
+        if pending.mode == "edit_title":
+            title = text.strip()
+            if not title:
+                return await _local_sse_text_response("Оглавление не может быть пустым. Повторите ввод.", req_id)
+            entries = await _load_prompt_db_entries()
+            if title.isdigit():
+                idx = int(title)
+                if 1 <= idx <= len(entries):
+                    title = entries[idx - 1][0]
+                else:
+                    return await _local_sse_text_response(
+                        f"Номер вне диапазона. Используйте 1..{len(entries)} или :prompt_list.", req_id
+                    )
+            if not any(t == title for t, _ in entries):
+                return await _local_sse_text_response(
+                    "Оглавление не найдено. Повторите ввод или используйте :prompt_list.", req_id
+                )
+            _prompt_command_states[session_key] = _PromptCommandState(mode="edit_content", title=title)
+            return await _local_sse_text_response(
+                "Введите новое содержимое системного промпта (можно в несколько строк).", req_id
+            )
+
+        if pending.mode == "add_content":
+            title = pending.title or ""
+            if not title:
+                _prompt_command_states.pop(session_key, None)
+                return await _local_sse_text_response(
+                    "Сбой состояния добавления. Повторите :prompt_add.", req_id
+                )
+            if not cleaned_content.strip():
+                return await _local_sse_text_response(
+                    "Содержимое не может быть пустым. Повторите ввод.", req_id
+                )
+            lines = _normalize_prompt_content(cleaned_content)
+            entries = await _load_prompt_db_entries()
+            entries.append((title, lines))
+            ok = await _write_prompt_db_entries(entries)
+            _prompt_command_states.pop(session_key, None)
+            if not ok:
+                return await _local_sse_text_response("Не удалось записать prompt.db.", req_id)
+            return await _local_sse_text_response(
+                f"Промпт сохранён: {title}\nДля активации используйте :prompt_select.", req_id
+            )
+
+        if pending.mode == "edit_content":
+            title = pending.title or ""
+            if not title:
+                _prompt_command_states.pop(session_key, None)
+                return await _local_sse_text_response(
+                    "Сбой состояния редактирования. Повторите :prompt_edit.", req_id
+                )
+            if not cleaned_content.strip():
+                return await _local_sse_text_response(
+                    "Содержимое не может быть пустым. Повторите ввод.", req_id
+                )
+            entries = await _load_prompt_db_entries()
+            updated = False
+            new_lines = _normalize_prompt_content(cleaned_content)
+            new_entries: list[tuple[str, list[str]]] = []
+            for t, lines in entries:
+                if t == title:
+                    new_entries.append((t, new_lines))
+                    updated = True
+                else:
+                    new_entries.append((t, lines))
+            if not updated:
+                _prompt_command_states.pop(session_key, None)
+                return await _local_sse_text_response(
+                    "Оглавление не найдено. Повторите :prompt_edit.", req_id
+                )
+            ok = await _write_prompt_db_entries(new_entries)
+            _prompt_command_states.pop(session_key, None)
+            if not ok:
+                return await _local_sse_text_response("Не удалось записать prompt.db.", req_id)
+            return await _local_sse_text_response(
+                f"Промпт обновлён: {title}\nДля активации используйте :prompt_select.", req_id
+            )
+
+    return None
 
 
 # Initialize components
@@ -1624,11 +2143,6 @@ async def v1_chat_completions(
             detail="Invalid request: 'messages' array cannot be empty"
         )
 
-    # Router-level system prompt injection (see ROUTER_SYSTEM_PROMPT env var).
-    inject_system_prompt(body)
-
-    raw_model_req = body.get("model") or ""
-    model_req = str(raw_model_req).strip()
     client_ip = request.client.host if request.client else "unknown"
     req_id = (
         (request.headers.get("x-request-id") or "").strip()
@@ -1636,6 +2150,16 @@ async def v1_chat_completions(
         or (request.headers.get("x-trace-id") or "").strip()
         or uuid.uuid4().hex
     )
+
+    cmd_resp = await _handle_prompt_commands(request, authorization, messages, req_id)
+    if cmd_resp is not None:
+        return cmd_resp
+
+    # Active system prompt injection (from prompt.db selection).
+    inject_system_prompt(body)
+
+    raw_model_req = body.get("model") or ""
+    model_req = str(raw_model_req).strip()
 
     log.info(
         "Incoming chat req_id=%s from=%s request_model=%r",

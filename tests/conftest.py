@@ -44,6 +44,8 @@ def reset_last_selected():
     """Reset last selected model between tests to avoid order coupling."""
     import copilot_ai_service
 
-    copilot_ai_service._last_selected = None
+    copilot_ai_service._last_selected_state.selected = None
+    copilot_ai_service._last_selected_state.selected_at = None
     yield
-    copilot_ai_service._last_selected = None
+    copilot_ai_service._last_selected_state.selected = None
+    copilot_ai_service._last_selected_state.selected_at = None

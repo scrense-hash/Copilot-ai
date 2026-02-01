@@ -48,6 +48,7 @@ def test_config():
         request_timeout_s=60.0,
         stream_idle_timeout_s=20.0,
         refresh_models_s=300,
+        last_selected_ttl_s=60,
         buffer_stream_keepalive_s=5.0,
         max_buffered_sse_bytes=20_000_000,
         debug_sse_traffic=False,
@@ -600,8 +601,14 @@ class TestIntegration:
             for line in lines:
                 yield line
 
+        # Allow non-free models in this test to avoid empty candidate loops.
+        from copilot_ai_service import config as app_config
+        relaxed_config = replace(app_config, max_price=1.0)
+
         # Mock the model cache to return sample models with tools support
-        with patch.object(model_cache, 'get_models', AsyncMock(return_value=sample_models)):
+        with patch("copilot_ai_service.config", relaxed_config), patch.object(
+            model_cache, "get_models", AsyncMock(return_value=sample_models)
+        ):
             # Mock the upstream client's chat_completion method
             mock_response = MagicMock()
             mock_response.status_code = 200
