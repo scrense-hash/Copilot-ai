@@ -48,7 +48,6 @@ def test_config():
         request_timeout_s=60.0,
         stream_idle_timeout_s=20.0,
         refresh_models_s=300,
-        last_selected_ttl_s=60,
         buffer_stream_keepalive_s=5.0,
         max_buffered_sse_bytes=20_000_000,
         debug_sse_traffic=False,

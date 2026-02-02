@@ -826,7 +826,6 @@ _last_selected_lock = asyncio.Lock()
 @dataclass
 class _LastSelectedState:
     selected: Optional[ModelInfo] = None
-    selected_at: Optional[float] = None
 
 
 _last_selected_state = _LastSelectedState()
@@ -1025,7 +1024,6 @@ async def set_last_selected(m: ModelInfo) -> None:
     """Set the last selected model."""
     async with _last_selected_lock:
         _last_selected_state.selected = m
-        _last_selected_state.selected_at = time.monotonic()
     log.info(
         "Selected model upstream_id=%s upstream_name=%s ctx=%s price=%s/%s",
         m.id,
@@ -1038,21 +1036,8 @@ async def set_last_selected(m: ModelInfo) -> None:
 
 async def get_last_selected() -> Optional[ModelInfo]:
     """Get the last selected model."""
-    ttl_s = int(getattr(config, "last_selected_ttl_s", 0))
     async with _last_selected_lock:
-        if _last_selected_state.selected is None:
-            return None
-        if ttl_s <= 0:
-            return None
-        if _last_selected_state.selected_at is None:
-            return None
-        age = time.monotonic() - _last_selected_state.selected_at
-        if age <= ttl_s:
-            return _last_selected_state.selected
-        # Expired: clear cache
-        _last_selected_state.selected = None
-        _last_selected_state.selected_at = None
-        return None
+        return _last_selected_state.selected
 
 
 @app.get("/healthz")
@@ -1634,9 +1619,8 @@ async def handle_auto_route_request_buffered_stream(
     if cached is not None:
         use_cached_only = True
         log.info(
-            "Auto-route using cached model upstream_id=%s ttl_s=%s",
+            "Auto-route using last successful model upstream_id=%s",
             cached.id,
-            getattr(config, "last_selected_ttl_s", None),
         )
     else:
         use_cached_only = False
@@ -1685,7 +1669,6 @@ async def handle_auto_route_request_buffered_stream(
         try:
             round_no = 0
             attempt_global = 0
-            start_idx = 0  # round-robin start so we don't always hit the same 429-first model
 
             while True:
                 round_no += 1
@@ -1716,10 +1699,7 @@ async def handle_auto_route_request_buffered_stream(
                     await asyncio.sleep(0.25)
                     continue
 
-                rotated = current_candidates[start_idx:] + current_candidates[:start_idx]
-                start_idx = (start_idx + 1) % total if total else 0
-
-                for i, mdl in enumerate(rotated, start=1):
+                for i, mdl in enumerate(current_candidates, start=1):
                     attempt_global += 1
                     log.info(
                         "Attempt %d (round %d %d/%d) -> %s [buffered]",
